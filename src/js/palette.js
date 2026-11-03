@@ -9,17 +9,34 @@
  */
 
 const SAMPLE_TARGET = 120_000;
-/** Colours closer than this (RGB distance) are treated as the same colour. */
-const MERGE_DISTANCE = 30;
+/** Colours closer than this perceptual difference (CIELAB ΔE) are treated as the same colour. */
+const MERGE_DELTA_E = 12;
 /** A candidate this close to the line between two accepted colours is an anti-aliasing blend. */
 const BLEND_DISTANCE = 16;
 /** Pixels within this distance of a palette colour define its exact value. */
 const CORE_DISTANCE = 24;
 /** Ignore colours covering less than this share of the sampled pixels. */
 const MIN_SHARE = 0.0004;
+/** A colour owning less than this share and within HALO_DELTA_E of another is a halo. */
+const HALO_SHARE = 0.01;
+const HALO_DELTA_E = 25;
 export const AUTO_PALETTE_LIMIT = 16;
 
 const distSq = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
+
+/** sRGB → CIELAB (D65). Lab distances match perceived difference far better than RGB. */
+function toLab([r, g, b]) {
+    const lin = (v) => {
+        const c = v / 255;
+        return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    };
+    const [R, G, B] = [lin(r), lin(g), lin(b)];
+    const f = (t) => (t > 216 / 24389 ? Math.cbrt(t) : (24389 / 27 * t + 16) / 116);
+    const x = f((0.4124 * R + 0.3576 * G + 0.1805 * B) / 0.95047);
+    const y = f(0.2126 * R + 0.7152 * G + 0.0722 * B);
+    const z = f((0.0193 * R + 0.1192 * G + 0.9505 * B) / 1.08883);
+    return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
+}
 
 function distanceToSegment(p, a, b) {
     const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
@@ -35,7 +52,7 @@ function isBlend(colour, accepted) {
     for (let i = 0; i < accepted.length; i += 1) {
         for (let j = i + 1; j < accepted.length; j += 1) {
             const { distance, t } = distanceToSegment(colour, accepted[i], accepted[j]);
-            if (t > 0.08 && t < 0.92 && distance < BLEND_DISTANCE) return true;
+            if (t > 0.02 && t < 0.98 && distance < BLEND_DISTANCE) return true;
         }
     }
     return false;
@@ -96,16 +113,50 @@ function refine(data, palette, step) {
 export function detectPalette(data, limit) {
     const { sorted, samples, step } = histogram(data);
     const minCount = Math.max(3, samples * MIN_SHARE);
-    const mergeSq = MERGE_DISTANCE * MERGE_DISTANCE;
+    const mergeSq = MERGE_DELTA_E * MERGE_DELTA_E;
     const accepted = [];
+    const acceptedLab = [];
     for (const { colour, count } of sorted) {
         if (accepted.length >= limit) break;
         if (count < minCount && accepted.length >= 2) break;
-        if (accepted.some((c) => distSq(c, colour) < mergeSq)) continue;
+        const lab = toLab(colour);
+        if (acceptedLab.some((c) => distSq(c, lab) < mergeSq)) continue;
         if (isBlend(colour, accepted)) continue;
         accepted.push(colour);
+        acceptedLab.push(lab);
     }
-    return refine(data, accepted, step).map((c) => c.map(Math.round));
+    const refined = refine(data, accepted, step);
+    return prune(data, refined, step).map((c) => c.map(Math.round));
+}
+
+/**
+ * Drops colours that end up owning only a sliver of the image while looking close
+ * to a bigger colour: compression halos (e.g. a pale pink rim where red meets
+ * white in a JPEG) rather than real colours of the artwork.
+ */
+function prune(data, palette, step) {
+    let current = palette;
+    for (;;) {
+        if (current.length <= 2) return current;
+        const counts = new Array(current.length).fill(0);
+        let total = 0;
+        for (let i = 0; i < data.length; i += 4 * step) {
+            if (data[i + 3] < 128) continue;
+            counts[paletteIndexFor([data[i], data[i + 1], data[i + 2]], current)] += 1;
+            total += 1;
+        }
+        const labs = current.map(toLab);
+        let weakest = -1;
+        for (let j = 0; j < current.length; j += 1) {
+            const share = counts[j] / total;
+            const nearest = Math.min(...labs.map((lab, o) => (o === j ? Infinity : Math.sqrt(distSq(lab, labs[j])))));
+            const halo = share < HALO_SHARE && nearest < HALO_DELTA_E;
+            const blend = isBlend(current[j], current.filter((_, o) => o !== j));
+            if ((halo || blend || share < MIN_SHARE) && (weakest < 0 || counts[j] < counts[weakest])) weakest = j;
+        }
+        if (weakest < 0) return current;
+        current = current.filter((_, j) => j !== weakest);
+    }
 }
 
 /**
@@ -137,6 +188,75 @@ function paletteIndexFor(p, palette) {
     return blend ? blend.index : nearest;
 }
 
+/**
+ * Majority filter over the snapped colours: each pixel takes the colour that most
+ * of its (2r+1)² neighbourhood has, when that clearly outnumbers its own. This
+ * removes the notches, bumps and stray pixels that compression noise leaves on
+ * edges, so the tracer fits clean outlines. Transparent pixels count as their own
+ * colour, so transparent edges are refined too.
+ */
+export function refineEdges(data, width, height, palette, radius, passes = 1) {
+    if (radius < 1 || palette.length < 2) return;
+    const k = palette.length + 1;
+    const transparent = palette.length;
+    const keys = new Map(palette.map((c, i) => [(c[0] << 16) | (c[1] << 8) | c[2], i]));
+    let labels = new Uint8Array(width * height);
+    for (let p = 0, i = 0; p < labels.length; p += 1, i += 4) {
+        labels[p] = data[i + 3] < 128 ? transparent : keys.get((data[i] << 16) | (data[i + 1] << 8) | data[i + 2]) ?? transparent;
+    }
+
+    const colHist = new Int32Array(width * k);
+    const rowHist = new Int32Array(k);
+    for (let pass = 0; pass < passes; pass += 1) {
+        const next = new Uint8Array(labels);
+        colHist.fill(0);
+        for (let y = 0; y <= Math.min(radius, height - 1); y += 1) {
+            for (let x = 0; x < width; x += 1) colHist[x * k + labels[y * width + x]] += 1;
+        }
+        for (let y = 0; y < height; y += 1) {
+            rowHist.fill(0);
+            for (let x = 0; x <= Math.min(radius, width - 1); x += 1) {
+                for (let c = 0; c < k; c += 1) rowHist[c] += colHist[x * k + c];
+            }
+            for (let x = 0; x < width; x += 1) {
+                const p = y * width + x;
+                const own = labels[p];
+                let best = own;
+                let bestCount = rowHist[own];
+                for (let c = 0; c < k; c += 1) {
+                    if (rowHist[c] > bestCount) {
+                        bestCount = rowHist[c];
+                        best = c;
+                    }
+                }
+                next[p] = best;
+                const add = x + radius + 1;
+                const drop = x - radius;
+                if (add < width) for (let c = 0; c < k; c += 1) rowHist[c] += colHist[add * k + c];
+                if (drop >= 0) for (let c = 0; c < k; c += 1) rowHist[c] -= colHist[drop * k + c];
+            }
+            const addRow = y + radius + 1;
+            const dropRow = y - radius;
+            if (addRow < height) for (let x = 0; x < width; x += 1) colHist[x * k + labels[addRow * width + x]] += 1;
+            if (dropRow >= 0) for (let x = 0; x < width; x += 1) colHist[x * k + labels[dropRow * width + x]] -= 1;
+        }
+        labels = next;
+    }
+
+    for (let p = 0, i = 0; p < labels.length; p += 1, i += 4) {
+        const label = labels[p];
+        if (label === transparent) {
+            data[i + 3] = 0;
+            continue;
+        }
+        const c = palette[label];
+        data[i] = c[0];
+        data[i + 1] = c[1];
+        data[i + 2] = c[2];
+        data[i + 3] = 255;
+    }
+}
+
 /** Replaces every opaque pixel with its palette colour, in place. */
 export function snapToPalette(data, palette) {
     if (palette.length < 2) return;
@@ -154,4 +274,23 @@ export function snapToPalette(data, palette) {
         data[i + 1] = c[1];
         data[i + 2] = c[2];
     }
+}
+
+const hex = (c) => `#${c.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+
+/**
+ * Rewrites every `fill="#rrggbb"` in the traced SVG to its nearest palette colour.
+ * VTracer averages colours when it merges small specks into neighbours, which
+ * leaves near-duplicate shades; snapping keeps the exact brand colours.
+ */
+export function snapSvgFills(svg, palette) {
+    if (!palette?.length) return svg;
+    const labs = palette.map(toLab);
+    return svg.replace(/fill="#([0-9a-f]{6})"/gi, (match, value) => {
+        const n = parseInt(value, 16);
+        const lab = toLab([(n >> 16) & 255, (n >> 8) & 255, n & 255]);
+        let best = 0;
+        for (let j = 1; j < labs.length; j += 1) if (distSq(lab, labs[j]) < distSq(lab, labs[best])) best = j;
+        return `fill="${hex(palette[best])}"`;
+    });
 }

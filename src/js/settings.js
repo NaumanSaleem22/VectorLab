@@ -6,6 +6,7 @@
  * image-preprocessor.js and palette.js.
  *
  * `colorCount`: 0 = unlimited, 1 = auto-detected palette, 2+ = that many colours.
+ * `edgeRefinement`: 0 = off, 1–3 = low/medium/high edge clean-up (see image-preprocessor.js).
  */
 
 /** Detail level 1–10 → VTracer `layerDifference` (colour gap between gradient layers). */
@@ -30,6 +31,7 @@ export const DEFAULT_SETTINGS = {
     backgroundColor: '#ffffff',
     maxSize: 2048,
     upscale: false,
+    edgeRefinement: 0,
 };
 
 export const PRESETS = {
@@ -45,11 +47,12 @@ export const PRESETS = {
             filterSpeckle: 4,
             mode: 'spline',
             cornerThreshold: 60,
-            simplify: 1,
+            simplify: 2,
             pathPrecision: 2,
             hierarchical: 'cutout',
             maxSize: 2048,
             upscale: true,
+            edgeRefinement: 1,
         },
     },
     illustration: {
@@ -69,6 +72,7 @@ export const PRESETS = {
             hierarchical: 'stacked',
             maxSize: 2048,
             upscale: false,
+            edgeRefinement: 0,
         },
     },
     photo: {
@@ -88,6 +92,7 @@ export const PRESETS = {
             hierarchical: 'stacked',
             maxSize: 1024,
             upscale: false,
+            edgeRefinement: 0,
         },
     },
     bw: {
@@ -104,6 +109,7 @@ export const PRESETS = {
             pathPrecision: 2,
             maxSize: 2048,
             upscale: true,
+            edgeRefinement: 1,
         },
     },
 };

@@ -8,7 +8,7 @@
  * `rasterize` needs a canvas and runs on the main thread.
  */
 import { UserFacingError } from './utils.js';
-import { AUTO_PALETTE_LIMIT, detectPalette, snapToPalette } from './palette.js';
+import { AUTO_PALETTE_LIMIT, detectPalette, refineEdges, snapToPalette } from './palette.js';
 
 const ALPHA_CUTOFF = 128;
 const BACKGROUND_TOLERANCE = 42;
@@ -16,11 +16,22 @@ const MIN_BORDER_DOMINANCE = 0.4;
 /** Mirrors VTracer's `KEYING_THRESHOLD` in crates/vtracer/src/frontend/keying.rs. */
 const ENGINE_KEYING_THRESHOLD = 0.2;
 /** Small images are enlarged to about this long side so thin details survive tracing. */
-const UPSCALE_TARGET = 1600;
+const UPSCALE_TARGET = 2400;
 const MAX_UPSCALE = 6;
-/** Blur radius applied after upscaling, in original-image pixels. */
-const UPSCALE_SMOOTHING = 0.45;
 export const COLOR_COUNT_AUTO = 1;
+
+/**
+ * Edge refinement levels, in original-image pixels: `blur` is the Gaussian sigma
+ * applied before colours are snapped (it irons out stair-steps and compression
+ * ripples), `majority` the radius of the majority filter applied after snapping
+ * (it removes leftover notches, bumps and stray pixels).
+ */
+const EDGE_REFINEMENT = [
+    { blur: 0, majority: 0 },
+    { blur: 0.45, majority: 0.5 },
+    { blur: 0.7, majority: 1 },
+    { blur: 1, majority: 1.5 },
+];
 
 /**
  * Size the image is traced at. Large images are scaled down to `maxSide`;
@@ -52,14 +63,6 @@ export function rasterize(bitmap, maxSide, upscale = false) {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(bitmap, 0, 0, size.width, size.height);
-    if (size.scale > 1 && 'filter' in ctx) {
-        // A slight blur turns the enlarged pixel staircase into smooth ramps, so the
-        // later palette snap / threshold cuts straight edges instead of wobbly ones.
-        // The unblurred copy underneath keeps the image borders from fading out.
-        ctx.filter = `blur(${(UPSCALE_SMOOTHING * size.scale).toFixed(2)}px)`;
-        ctx.drawImage(bitmap, 0, 0, size.width, size.height);
-        ctx.filter = 'none';
-    }
     let imageData;
     try {
         imageData = ctx.getImageData(0, 0, size.width, size.height);
@@ -213,6 +216,59 @@ function posterize(data, levels) {
     }
 }
 
+/** One horizontal + vertical box-blur pass over premultiplied channels. */
+function boxBlur(src, dst, width, height, r) {
+    const span = 2 * r + 1;
+    for (let y = 0; y < height; y += 1) {
+        const row = y * width;
+        for (let c = 0; c < 4; c += 1) {
+            let sum = 0;
+            for (let x = -r; x <= r; x += 1) sum += src[(row + Math.min(width - 1, Math.max(0, x))) * 4 + c];
+            for (let x = 0; x < width; x += 1) {
+                dst[(row + x) * 4 + c] = sum / span;
+                sum += src[(row + Math.min(width - 1, x + r + 1)) * 4 + c] - src[(row + Math.max(0, x - r)) * 4 + c];
+            }
+        }
+    }
+    for (let x = 0; x < width; x += 1) {
+        for (let c = 0; c < 4; c += 1) {
+            let sum = 0;
+            for (let y = -r; y <= r; y += 1) sum += dst[(Math.min(height - 1, Math.max(0, y)) * width + x) * 4 + c];
+            for (let y = 0; y < height; y += 1) {
+                src[(y * width + x) * 4 + c] = sum / span;
+                sum += dst[(Math.min(height - 1, y + r + 1) * width + x) * 4 + c] - dst[(Math.max(0, y - r) * width + x) * 4 + c];
+            }
+        }
+    }
+}
+
+/**
+ * Approximate Gaussian blur (three box passes) in place. Colours are blurred
+ * premultiplied by alpha so transparent pixels don't darken nearby edges.
+ */
+function gaussianBlur({ data, width, height }, sigma) {
+    const r = Math.round(Math.sqrt(sigma * sigma + 0.25) - 0.5);
+    if (r < 1) return;
+    const buf = new Float32Array(data.length);
+    for (let i = 0; i < data.length; i += 4) {
+        const a = data[i + 3] / 255;
+        buf[i] = data[i] * a;
+        buf[i + 1] = data[i + 1] * a;
+        buf[i + 2] = data[i + 2] * a;
+        buf[i + 3] = data[i + 3];
+    }
+    const tmp = new Float32Array(data.length);
+    for (let pass = 0; pass < 3; pass += 1) boxBlur(buf, tmp, width, height, r);
+    for (let i = 0; i < data.length; i += 4) {
+        const a = buf[i + 3];
+        const k = a > 0 ? 255 / a : 0;
+        data[i] = buf[i] * k;
+        data[i + 1] = buf[i + 1] * k;
+        data[i + 2] = buf[i + 2] * k;
+        data[i + 3] = a;
+    }
+}
+
 function hasTransparency(data) {
     for (let i = 3; i < data.length; i += 4) {
         if (data[i] === 0) return true;
@@ -247,13 +303,17 @@ function padForKeying(image) {
 }
 
 /**
- * Applies colour-mode and background preprocessing in place.
+ * Applies colour-mode, background and edge preprocessing in place.
+ * `scale` is trace size ÷ original size, used to express refinement in original pixels.
  * Returns the pixels to trace and the vertical offset the SVG viewBox must apply.
  */
-export function preprocess(image, settings) {
+export function preprocess(image, settings, scale = 1) {
     const warnings = [];
     const isBinary = settings.colorMode === 'bw';
     const background = settings.background;
+    const refinement = EDGE_REFINEMENT[settings.edgeRefinement] ?? EDGE_REFINEMENT[0];
+    // Refinement radii are in original-image pixels; never go below one traced pixel.
+    const pixelScale = Math.max(1, scale);
 
     if (background === 'remove' && !removeBackground(image)) {
         warnings.push('No uniform background colour was found along the image edges, so the background was kept.');
@@ -263,7 +323,8 @@ export function preprocess(image, settings) {
         // The binary engine thresholds on RGB only, so transparent areas must read as light, not black.
         // A white or custom background is added afterwards as a vector rectangle behind the traced shapes.
         flattenOnto(image.data, { r: 255, g: 255, b: 255 });
-        return { image, offsetY: 0, warnings, paletteSize: 0 };
+        if (refinement.blur) gaussianBlur(image, refinement.blur * pixelScale);
+        return { image, offsetY: 0, warnings, palette: null };
     }
 
     if (background === 'white' || background === 'custom') {
@@ -277,12 +338,16 @@ export function preprocess(image, settings) {
     let palette = null;
     if (settings.colorCount > 0) {
         const limit = settings.colorCount === COLOR_COUNT_AUTO ? AUTO_PALETTE_LIMIT : settings.colorCount;
+        // Detect on the sharp pixels: smoothing first would widen blends into extra colours.
         palette = detectPalette(image.data, limit);
+        if (refinement.blur) gaussianBlur(image, refinement.blur * pixelScale);
         snapToPalette(image.data, palette);
+        const radius = Math.round(refinement.majority * pixelScale);
+        if (radius) refineEdges(image.data, image.width, image.height, palette, radius);
     } else if (settings.gradientBands > 0) {
         posterize(image.data, settings.gradientBands);
     }
 
     const keyed = padForKeying(image);
-    return { image: keyed.image, offsetY: keyed.offsetY, warnings, paletteSize: palette?.length ?? 0 };
+    return { image: keyed.image, offsetY: keyed.offsetY, warnings, palette };
 }

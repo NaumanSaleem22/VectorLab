@@ -269,6 +269,7 @@ function readSettings() {
         backgroundColor: form.elements.backgroundColor.value,
         maxSize: num('maxSize'),
         upscale: form.elements.upscale.checked,
+        edgeRefinement: Number(form.elements.edgeRefinement.value),
     };
 }
 
@@ -311,6 +312,12 @@ function refreshSettingsUi() {
     }
     form.elements.threshold.disabled = settings.adaptive;
     const palette = settings.colorCount > 0;
+    const refinable = palette || settings.colorMode === 'bw';
+    for (const radio of form.elements.edgeRefinement) radio.disabled = !refinable;
+    $('#edgeRefinementField').classList.toggle('is-disabled', !refinable);
+    $('#edgeRefinementHint').textContent = refinable
+        ? 'Cleans jagged, wobbly or noisy edges, e.g. from small or JPEG images. Higher is smoother but rounds tiny points; use Off for pixel-perfect sources.'
+        : 'Needs a colour count (Auto or a number) or Black & white mode.';
     form.elements.gradientBands.disabled = palette;
     form.elements.gradientBands.closest('.field').classList.toggle('is-disabled', palette);
     $('#gradientBandsHint').textContent = palette

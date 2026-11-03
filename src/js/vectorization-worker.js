@@ -9,6 +9,7 @@ import wasmUrl from '../wasm/vtracer/vtracer_wasm_bg.wasm?url';
 import { preprocess } from './image-preprocessor.js';
 import { toEngineOptions } from './settings.js';
 import { finalizeSvg, optimizeSvg } from './svg-optimizer.js';
+import { snapSvgFills } from './palette.js';
 
 let enginePromise = null;
 
@@ -41,11 +42,12 @@ async function vectorize({ id, pixels, width, height, settings, output }) {
     lap('init');
 
     stage('preprocess');
-    const prepared = preprocess({ data: new Uint8ClampedArray(pixels), width, height }, settings);
+    const scale = width / output.width;
+    const prepared = preprocess({ data: new Uint8ClampedArray(pixels), width, height }, settings, scale);
     lap('preprocess');
 
     stage('trace');
-    const engineOptions = toEngineOptions(settings, width / output.width);
+    const engineOptions = toEngineOptions(settings, scale);
     let traced;
     try {
         const { data, width: w, height: h } = prepared.image;
@@ -57,7 +59,7 @@ async function vectorize({ id, pixels, width, height, settings, output }) {
 
     stage('generate');
     const needsBackgroundRect = settings.colorMode === 'bw' && (settings.background === 'white' || settings.background === 'custom');
-    const svg = finalizeSvg(traced, {
+    const svg = finalizeSvg(snapSvgFills(traced, prepared.palette), {
         traceWidth: prepared.image.width,
         traceHeight: prepared.image.height,
         offsetY: prepared.offsetY,
@@ -85,7 +87,7 @@ async function vectorize({ id, pixels, width, height, settings, output }) {
         optimized,
         optimizeError,
         warnings: prepared.warnings,
-        paletteSize: prepared.paletteSize,
+        paletteSize: prepared.palette?.length ?? 0,
         engineOptions,
         trace: { width: prepared.image.width, height: prepared.image.height - prepared.offsetY * 2 },
         timings,
