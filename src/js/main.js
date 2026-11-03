@@ -1,6 +1,6 @@
 import '../scss/main.scss';
 import { loadImage } from './image-loader.js';
-import { processingSize, rasterize } from './image-preprocessor.js';
+import { COLOR_COUNT_AUTO, processingSize, rasterize } from './image-preprocessor.js';
 import { DEFAULT_SETTINGS, PRESETS, applyPreset } from './settings.js';
 import { Vectorizer, CancelledError } from './vectorizer.js';
 import { validateSvg, verifyReopen } from './svg-validator.js';
@@ -253,7 +253,7 @@ function readSettings() {
     return {
         preset: state.settings.preset,
         colorMode: form.elements.colorMode.value,
-        maxColors: num('maxColors') === 1 ? 2 : num('maxColors'),
+        colorCount: num('colorCount'),
         detail: num('detail'),
         colorPrecision: num('colorPrecision'),
         gradientBands: num('gradientBands'),
@@ -268,11 +268,12 @@ function readSettings() {
         background: form.elements.background.value,
         backgroundColor: form.elements.backgroundColor.value,
         maxSize: num('maxSize'),
+        upscale: form.elements.upscale.checked,
     };
 }
 
 const OUTPUT_FORMAT = {
-    maxColors: (v) => (v === 0 ? 'Unlimited' : `${Math.max(2, v)}`),
+    colorCount: (v) => (v === 0 ? 'Unlimited' : v === COLOR_COUNT_AUTO ? 'Auto' : `${v}`),
     detail: (v) => `${v} / 10`,
     threshold: (v) => `${v}`,
     filterSpeckle: (v) => (v === 0 ? 'Off' : `${v} px`),
@@ -309,6 +310,12 @@ function refreshSettingsUi() {
         input.closest('.field').classList.toggle('is-disabled', input.disabled);
     }
     form.elements.threshold.disabled = settings.adaptive;
+    const palette = settings.colorCount > 0;
+    form.elements.gradientBands.disabled = palette;
+    form.elements.gradientBands.closest('.field').classList.toggle('is-disabled', palette);
+    $('#gradientBandsHint').textContent = palette
+        ? 'Not used while a colour count is set: the palette already defines every colour.'
+        : 'SVG paths have flat fills, so smooth gradients are traced as steps. More levels give finer bands. Off may merge gradients into one colour.';
     el.backgroundColorRow.hidden = settings.background !== 'custom';
     el.backgroundColorValue.textContent = settings.backgroundColor.toUpperCase();
     el.backgroundHint.textContent =
@@ -324,9 +331,10 @@ function updateSettingsNote() {
         return;
     }
     const { width, height } = state.image.meta;
-    const size = processingSize(width, height, state.settings.maxSize);
+    const size = processingSize(width, height, state.settings.maxSize, state.settings.upscale);
+    const verb = size.scale > 1 ? `Upscaled ${size.scale.toFixed(1)}× and traced` : 'Traced';
     el.settingsNote.textContent = size.scaled
-        ? `Traced at ${size.width} × ${size.height} px, output at ${width} × ${height}.`
+        ? `${verb} at ${size.width} × ${size.height} px, output at ${width} × ${height}.`
         : `Traced at full resolution, ${width} × ${height} px.`;
 }
 
@@ -393,7 +401,7 @@ async function convert() {
     await yieldToBrowser();
 
     try {
-        const raster = rasterize(bitmap, settings.maxSize);
+        const raster = rasterize(bitmap, settings.maxSize, settings.upscale);
         const response = await vectorizer.vectorize(
             { pixels: raster.data, width: raster.width, height: raster.height },
             settings,
@@ -424,6 +432,7 @@ async function convert() {
             optimized,
             optimizeError: response.optimizeError,
             warnings: response.warnings,
+            paletteSize: response.paletteSize,
             engineOptions: response.engineOptions,
             trace: response.trace,
             timings: response.timings,
@@ -485,7 +494,7 @@ function showResult() {
         ['SVG size', formatBytes(result.raw.size)],
         ['Optimized size', result.optimized ? `${formatBytes(result.optimized.size)} (${saved >= 0 ? '−' : '+'}${Math.abs(saved * 100).toFixed(1)}%)` : 'Unavailable'],
         ['Vector paths', formatNumber(rawStats.pathCount)],
-        ['Fill colours', formatNumber(rawStats.colorCount)],
+        ['Fill colours', result.paletteSize ? `${formatNumber(rawStats.colorCount)} (palette of ${result.paletteSize})` : formatNumber(rawStats.colorCount)],
         ['Conversion time', `${formatDuration(result.duration)} (tracing ${formatDuration(result.timings.trace)})`],
     ];
     el.stats.replaceChildren(

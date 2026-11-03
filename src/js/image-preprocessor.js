@@ -3,32 +3,47 @@
  *
  * VTracer only consumes RGBA pixels, so everything here is genuine pixel work
  * rather than an engine option: resizing, alpha handling, background removal,
- * background flattening and grayscale conversion. The functions operating on
+ * background flattening, grayscale, gradient bands and palette snapping. The functions operating on
  * `{ data, width, height }` are pure and run inside the vectorization worker;
  * `rasterize` needs a canvas and runs on the main thread.
  */
 import { UserFacingError } from './utils.js';
+import { AUTO_PALETTE_LIMIT, detectPalette, snapToPalette } from './palette.js';
 
 const ALPHA_CUTOFF = 128;
 const BACKGROUND_TOLERANCE = 42;
 const MIN_BORDER_DOMINANCE = 0.4;
 /** Mirrors VTracer's `KEYING_THRESHOLD` in crates/vtracer/src/frontend/keying.rs. */
 const ENGINE_KEYING_THRESHOLD = 0.2;
+/** Small images are enlarged to about this long side so thin details survive tracing. */
+const UPSCALE_TARGET = 1600;
+const MAX_UPSCALE = 6;
+/** Blur radius applied after upscaling, in original-image pixels. */
+const UPSCALE_SMOOTHING = 0.45;
+export const COLOR_COUNT_AUTO = 1;
 
-export function processingSize(width, height, maxSide) {
+/**
+ * Size the image is traced at. Large images are scaled down to `maxSide`;
+ * with `upscale`, small images are enlarged so that 1–3 px details (thin gaps,
+ * sharp tips, small text) become wide enough for the tracer to keep.
+ */
+export function processingSize(width, height, maxSide, upscale = false) {
     const longest = Math.max(width, height);
-    if (!maxSide || longest <= maxSide) return { width, height, scaled: false };
-    const scale = maxSide / longest;
+    let scale = 1;
+    if (maxSide && longest > maxSide) scale = maxSide / longest;
+    else if (upscale && longest < UPSCALE_TARGET) scale = Math.min(MAX_UPSCALE, UPSCALE_TARGET / longest);
+    if (scale === 1) return { width, height, scale, scaled: false };
     return {
         width: Math.max(1, Math.round(width * scale)),
         height: Math.max(1, Math.round(height * scale)),
+        scale,
         scaled: true,
     };
 }
 
 /** Draws the decoded bitmap at processing size and returns unpremultiplied RGBA pixels. */
-export function rasterize(bitmap, maxSide) {
-    const size = processingSize(bitmap.width, bitmap.height, maxSide);
+export function rasterize(bitmap, maxSide, upscale = false) {
+    const size = processingSize(bitmap.width, bitmap.height, maxSide, upscale);
     const canvas = document.createElement('canvas');
     canvas.width = size.width;
     canvas.height = size.height;
@@ -37,6 +52,14 @@ export function rasterize(bitmap, maxSide) {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(bitmap, 0, 0, size.width, size.height);
+    if (size.scale > 1 && 'filter' in ctx) {
+        // A slight blur turns the enlarged pixel staircase into smooth ramps, so the
+        // later palette snap / threshold cuts straight edges instead of wobbly ones.
+        // The unblurred copy underneath keeps the image borders from fading out.
+        ctx.filter = `blur(${(UPSCALE_SMOOTHING * size.scale).toFixed(2)}px)`;
+        ctx.drawImage(bitmap, 0, 0, size.width, size.height);
+        ctx.filter = 'none';
+    }
     let imageData;
     try {
         imageData = ctx.getImageData(0, 0, size.width, size.height);
@@ -45,7 +68,7 @@ export function rasterize(bitmap, maxSide) {
     }
     canvas.width = 0;
     canvas.height = 0;
-    return { data: imageData.data, width: size.width, height: size.height, scaled: size.scaled };
+    return { data: imageData.data, width: size.width, height: size.height, scale: size.scale };
 }
 
 export function parseHexColor(hex) {
@@ -240,7 +263,7 @@ export function preprocess(image, settings) {
         // The binary engine thresholds on RGB only, so transparent areas must read as light, not black.
         // A white or custom background is added afterwards as a vector rectangle behind the traced shapes.
         flattenOnto(image.data, { r: 255, g: 255, b: 255 });
-        return { image, offsetY: 0, warnings };
+        return { image, offsetY: 0, warnings, paletteSize: 0 };
     }
 
     if (background === 'white' || background === 'custom') {
@@ -250,8 +273,16 @@ export function preprocess(image, settings) {
     }
 
     if (settings.colorMode === 'grayscale') toGrayscale(image.data);
-    if (settings.gradientBands > 0) posterize(image.data, settings.gradientBands);
+
+    let palette = null;
+    if (settings.colorCount > 0) {
+        const limit = settings.colorCount === COLOR_COUNT_AUTO ? AUTO_PALETTE_LIMIT : settings.colorCount;
+        palette = detectPalette(image.data, limit);
+        snapToPalette(image.data, palette);
+    } else if (settings.gradientBands > 0) {
+        posterize(image.data, settings.gradientBands);
+    }
 
     const keyed = padForKeying(image);
-    return { image: keyed.image, offsetY: keyed.offsetY, warnings };
+    return { image: keyed.image, offsetY: keyed.offsetY, warnings, paletteSize: palette?.length ?? 0 };
 }

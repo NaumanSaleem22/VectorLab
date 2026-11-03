@@ -1,8 +1,11 @@
 /**
  * Vectorization settings: defaults, presets, and the mapping from UI settings
  * to VTracer engine options. Settings that VTracer does not expose directly
- * (grayscale, gradient bands, background handling, processing size) are applied
- * as pixel preprocessing instead; see image-preprocessor.js.
+ * (grayscale, colour count, gradient bands, background handling, processing
+ * size and upscaling) are applied as pixel preprocessing instead; see
+ * image-preprocessor.js and palette.js.
+ *
+ * `colorCount`: 0 = unlimited, 1 = auto-detected palette, 2+ = that many colours.
  */
 
 /** Detail level 1–10 → VTracer `layerDifference` (colour gap between gradient layers). */
@@ -11,7 +14,7 @@ const DETAIL_TO_LAYER_DIFFERENCE = [128, 96, 64, 48, 32, 24, 16, 12, 8, 4];
 export const DEFAULT_SETTINGS = {
     preset: 'illustration',
     colorMode: 'color',
-    maxColors: 0,
+    colorCount: 0,
     detail: 7,
     colorPrecision: 7,
     gradientBands: 0,
@@ -26,15 +29,16 @@ export const DEFAULT_SETTINGS = {
     background: 'preserve',
     backgroundColor: '#ffffff',
     maxSize: 2048,
+    upscale: false,
 };
 
 export const PRESETS = {
     logo: {
         label: 'Logo',
-        description: 'Flat colours, crisp edges and a limited palette.',
+        description: 'Flat colours, crisp edges and an auto-detected palette.',
         settings: {
             colorMode: 'color',
-            maxColors: 12,
+            colorCount: 1,
             detail: 8,
             colorPrecision: 8,
             gradientBands: 0,
@@ -43,8 +47,9 @@ export const PRESETS = {
             cornerThreshold: 60,
             simplify: 1,
             pathPrecision: 2,
-            hierarchical: 'stacked',
+            hierarchical: 'cutout',
             maxSize: 2048,
+            upscale: true,
         },
     },
     illustration: {
@@ -52,7 +57,7 @@ export const PRESETS = {
         description: 'Detailed artwork with many colours and smooth curves.',
         settings: {
             colorMode: 'color',
-            maxColors: 0,
+            colorCount: 0,
             detail: 7,
             colorPrecision: 7,
             gradientBands: 16,
@@ -63,6 +68,7 @@ export const PRESETS = {
             pathPrecision: 2,
             hierarchical: 'stacked',
             maxSize: 2048,
+            upscale: false,
         },
     },
     photo: {
@@ -70,7 +76,7 @@ export const PRESETS = {
         description: 'Coarser colour layers and heavier speckle filtering (VTracer photo preset).',
         settings: {
             colorMode: 'color',
-            maxColors: 0,
+            colorCount: 0,
             detail: 4,
             colorPrecision: 8,
             gradientBands: 0,
@@ -81,6 +87,7 @@ export const PRESETS = {
             pathPrecision: 1,
             hierarchical: 'stacked',
             maxSize: 1024,
+            upscale: false,
         },
     },
     bw: {
@@ -96,6 +103,7 @@ export const PRESETS = {
             simplify: 1,
             pathPrecision: 2,
             maxSize: 2048,
+            upscale: true,
         },
     },
 };
@@ -111,11 +119,15 @@ export function layerDifferenceFor(detail) {
     return DETAIL_TO_LAYER_DIFFERENCE[index];
 }
 
-/** Builds the options object passed to VTracer's `vectorize_rgba`. */
-export function toEngineOptions(settings) {
+/**
+ * Builds the options object passed to VTracer's `vectorize_rgba`.
+ * @param {number} scale trace size ÷ original size; when an image was upscaled,
+ *   the speckle filter is scaled with it so it still means original-image pixels.
+ */
+export function toEngineOptions(settings, scale = 1) {
     const options = {
         mode: settings.mode,
-        filterSpeckle: settings.filterSpeckle,
+        filterSpeckle: Math.round(settings.filterSpeckle * Math.max(1, scale)),
         pathPrecision: settings.pathPrecision,
         optimize: 1,
     };
@@ -136,6 +148,5 @@ export function toEngineOptions(settings) {
     options.hierarchical = settings.hierarchical;
     options.colorPrecision = settings.colorPrecision;
     options.layerDifference = layerDifferenceFor(settings.detail);
-    if (settings.maxColors > 0) options.maxColors = settings.maxColors;
     return options;
 }

@@ -45,7 +45,7 @@ async function vectorize({ id, pixels, width, height, settings, output }) {
     lap('preprocess');
 
     stage('trace');
-    const engineOptions = toEngineOptions(settings);
+    const engineOptions = toEngineOptions(settings, width / output.width);
     let traced;
     try {
         const { data, width: w, height: h } = prepared.image;
@@ -85,6 +85,7 @@ async function vectorize({ id, pixels, width, height, settings, output }) {
         optimized,
         optimizeError,
         warnings: prepared.warnings,
+        paletteSize: prepared.paletteSize,
         engineOptions,
         trace: { width: prepared.image.width, height: prepared.image.height - prepared.offsetY * 2 },
         timings,
