@@ -1,0 +1,58 @@
+@use 'variables' as *;
+
+.hero {
+    position: relative;
+    padding-top: clamp(56px, 10vw, 104px);
+    padding-bottom: clamp(40px, 6vw, 64px);
+    text-align: center;
+
+    &::before {
+        content: '';
+        position: absolute;
+        inset: -64px 0 auto;
+        height: 420px;
+        z-index: -1;
+        background: radial-gradient(ellipse 50% 60% at 50% 0%, rgba(118, 99, 255, 0.16), transparent 70%);
+        pointer-events: none;
+    }
+
+    &__title {
+        margin: 16px auto 18px;
+        max-width: 14ch;
+        font-size: clamp(40px, 7vw, 72px);
+        font-weight: 700;
+        letter-spacing: -0.035em;
+
+        span {
+            color: var(--accent);
+        }
+    }
+
+    &__lead {
+        max-width: 560px;
+        margin-inline: auto;
+        font-size: clamp(16px, 2vw, 18px);
+        color: var(--text-muted);
+    }
+
+    &__actions {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+        margin-top: 32px;
+    }
+
+    &__note {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13.5px;
+        color: var(--text-dim);
+
+        .icon {
+            width: 15px;
+            height: 15px;
+        }
+    }
+}

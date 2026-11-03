@@ -1,0 +1,1 @@
+Built from https://github.com/visioncortex/vtracer.git @ e71343fbcbf469b8a72a255030408a39939162eb (crate: nodejs/, wasm-bindgen 0.2.130 --target web)

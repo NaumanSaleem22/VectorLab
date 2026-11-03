@@ -1,0 +1,105 @@
+@use 'variables' as *;
+
+.header {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    height: $header-h;
+    background: rgba(14, 14, 17, 0.82);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: saturate(140%) blur(12px);
+
+    &__inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        height: 100%;
+    }
+}
+
+.brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text);
+    text-decoration: none;
+
+    &__mark {
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        color: var(--accent);
+        background: var(--accent-soft);
+        border: 1px solid rgba(139, 124, 255, 0.25);
+        border-radius: 8px;
+
+        .icon {
+            width: 18px;
+            height: 18px;
+        }
+    }
+
+    @include down($bp-sm) {
+        gap: 8px;
+    }
+
+    &__name {
+        font-size: 17px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+    }
+
+    &__tag {
+        padding: 3px 7px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--text-dim);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+
+        @include down($bp-sm) {
+            display: none;
+        }
+    }
+
+    &--small &__mark {
+        width: 26px;
+        height: 26px;
+    }
+}
+
+.nav {
+    display: flex;
+    gap: 4px;
+
+    a {
+        padding: 7px 12px;
+        font-size: 14px;
+        color: var(--text-muted);
+        text-decoration: none;
+        border-radius: 7px;
+        transition: color 0.15s var(--ease), background-color 0.15s var(--ease);
+
+        &:hover {
+            color: var(--text);
+            background: var(--surface-2);
+        }
+    }
+
+    a {
+        white-space: nowrap;
+    }
+
+    @include down($bp-sm) {
+        gap: 0;
+
+        a {
+            padding: 6px 6px;
+            font-size: 12.5px;
+        }
+    }
+}

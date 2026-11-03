@@ -1,0 +1,114 @@
+@use 'variables' as *;
+
+.container {
+    width: 100%;
+    max-width: $container;
+    margin-inline: auto;
+    padding-inline: 24px;
+
+    @include down($bp-sm) {
+        padding-inline: 16px;
+    }
+}
+
+.visually-hidden {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.skip-link {
+    position: absolute;
+    left: 16px;
+    top: -60px;
+    z-index: 100;
+    padding: 10px 14px;
+    background: var(--accent);
+    color: #fff;
+    border-radius: var(--radius-sm);
+    text-decoration: none;
+    font-weight: 600;
+
+    &:focus {
+        top: 12px;
+    }
+}
+
+.icon-sprite {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+}
+
+.icon {
+    width: 18px;
+    height: 18px;
+    flex: none;
+}
+
+.spinner {
+    width: 20px;
+    height: 20px;
+    flex: none;
+    border-radius: 50%;
+    border: 2px solid var(--border-strong);
+    border-top-color: var(--accent);
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    z-index: 200;
+    max-width: calc(100vw - 32px);
+    padding: 10px 16px;
+    font-size: 14px;
+    color: var(--text);
+    background: var(--surface-3);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, 8px);
+    transition: opacity 0.2s var(--ease), transform 0.2s var(--ease);
+
+    &.is-visible {
+        opacity: 1;
+        transform: translate(-50%, 0);
+    }
+}
+
+.alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 16px;
+    padding: 12px 12px 12px 14px;
+    color: #fecaca;
+    background: var(--danger-soft);
+    border: 1px solid rgba(248, 113, 113, 0.3);
+    border-radius: var(--radius);
+
+    > .icon {
+        color: var(--danger);
+        margin-top: 2px;
+    }
+
+    p {
+        flex: 1;
+        font-size: 14px;
+    }
+}
