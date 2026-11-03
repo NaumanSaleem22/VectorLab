@@ -240,6 +240,17 @@
                             <p class="field__hint">Refits curves with fewer nodes within this tolerance. Spline mode only.</p>
                         </div>
 
+                        <fieldset class="field" id="edgeRefinementField">
+                            <legend class="field__label">Edge refinement</legend>
+                            <div class="segmented segmented--block">
+                                <label><input type="radio" name="edgeRefinement" value="0"><span>Off</span></label>
+                                <label><input type="radio" name="edgeRefinement" value="1"><span>Low</span></label>
+                                <label><input type="radio" name="edgeRefinement" value="2"><span>Medium</span></label>
+                                <label><input type="radio" name="edgeRefinement" value="3"><span>High</span></label>
+                            </div>
+                            <p class="field__hint" id="edgeRefinementHint"></p>
+                        </fieldset>
+
                         <fieldset class="field">
                             <legend class="field__label">Background</legend>
                             <div class="segmented segmented--block segmented--wrap">
@@ -317,7 +328,7 @@
                                     <input type="checkbox" name="upscale" id="upscale">
                                     <span>Upscale small images for sharper, more accurate edges</span>
                                 </label>
-                                <p class="field__hint">Enlarges images under 1600 px before tracing so thin gaps, points and small text survive. Works best with a colour count or Black &amp; white.</p>
+                                <p class="field__hint">Enlarges images under 2400 px before tracing so thin gaps, points and small text survive. Works best with a colour count or Black &amp; white.</p>
                             </div>
                         </details>
 

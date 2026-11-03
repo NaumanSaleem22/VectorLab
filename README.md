@@ -72,7 +72,7 @@ image-to-svg/
     │   ├── main.js             App controller: state, UI wiring, workflow
     │   ├── image-loader.js     File validation and decoding
     │   ├── image-preprocessor.js  Resize/upscale, alpha, background, grayscale, bands
-    │   ├── palette.js          Logo palette detection and blend-aware snapping
+    │   ├── palette.js          Palette detection (CIELAB), blend-aware snapping, edge majority filter
     │   ├── settings.js         Defaults, presets, UI → engine option mapping
     │   ├── vectorizer.js       Worker lifecycle, jobs, cancel, error mapping
     │   ├── vectorization-worker.js  Preprocess → VTracer → SVGO
@@ -170,7 +170,8 @@ Every control changes the actual conversion. Settings marked *preprocessing* are
 | Colour precision | VTracer `colorPrecision` (significant bits per channel) |
 | Layering | VTracer `hierarchical`: `stacked` or `cutout` (gap-free mosaic) |
 | Processing size | *preprocessing*: high-quality canvas downscale |
-| Upscale small images | *preprocessing*: images under 1600 px are enlarged (up to 6×) with a slight blur so 1–3 px details survive; noise reduction is scaled with it so it still means original-image pixels |
+| Upscale small images | *preprocessing*: images under 2400 px are enlarged (up to 6×) so 1–3 px details survive; noise reduction is scaled with it so it still means original-image pixels |
+| Edge refinement | *preprocessing* (needs a colour count or B&W): Off / Low / Medium / High. A Gaussian blur after palette detection irons out stair-steps and JPEG ripples, then a majority filter after snapping removes notches, bumps and stray pixels. Higher is smoother but rounds tiny points |
 | Background: Keep | *preprocessing*: alpha snapped to 0/255, so VTracer's keying discards transparent pixels |
 | Background: Remove | *preprocessing*: flood fill from the edges removes the dominant border colour (tolerance 42) |
 | Background: White / Custom | *preprocessing*: alpha flattened onto the colour. In B&W mode a vector `<rect>` is added behind the shapes |
@@ -179,10 +180,10 @@ Every control changes the actual conversion. Settings marked *preprocessing* are
 
 | Preset | Key parameters |
 | --- | --- |
-| Logo | colour, **Auto palette**, **upscale on**, **cutout layering**, speckle 4, smoothing 1 px, 2048 px |
+| Logo | colour, **Auto palette**, **upscale on**, **edge refinement Low**, **cutout layering**, speckle 4, smoothing 2 px, 2048 px; output fills snapped to the exact palette colours |
 | Illustration | colour, unlimited colours, detail 7, precision 7, 16 gradient bands, speckle 4, 2048 px |
 | Photograph | VTracer's own photo preset: speckle 10, precision 8, layer difference 48, corner 180°, 1024 px |
-| Black & White | binary clustering, threshold 128, speckle 4, smoothing 1 px, upscale on, 2048 px |
+| Black & White | binary clustering, threshold 128, speckle 4, smoothing 1 px, upscale on, edge refinement Low, 2048 px |
 
 ## Testing performed
 
@@ -212,7 +213,8 @@ Every result passed all validation checks: well-formed XML, valid viewBox, geome
 | Same logo at 184 px | 3.78% bad | **0.85%** bad |
 | Same logo as JPEG (quality 60) | 1.82% bad, 657 paths | **0.42%** bad, 85 paths |
 | Multicolour logo sample | 0.77% bad | **0.05%** bad |
-| Transparent icon sample | 0.96% bad | **0.24%** bad |
+| Transparent icon sample | 0.96% bad | **0.22%** bad |
+| Real logo, 819 px JPEG (heavy compression) | ragged edges, 22 colours | clean edges, exactly 3 colours, 18 paths |
 
 The reworked output opened in Illustrator with editable paths and 0 raster items.
 
@@ -235,6 +237,8 @@ Requires module Web Workers, WebAssembly, `createImageBitmap`, `<dialog>` and CS
 
 ## Known limitations
 
+- **Edge refinement vs. sharp points.** Refinement rounds features smaller than about one original pixel (e.g. the tips of a tiny zig-zag). Use Off for clean, pixel-perfect PNGs and Medium/High for blurry or JPEG sources.
+- **Logo conversion time.** Upscaling and refinement make logo conversions take roughly 2–5 seconds.
 - **Logo palette.** Auto palette (Logo preset) snaps to at most 16 detected colours, so gradients inside a logo become flat areas. Use the Illustration preset or set Colour count to unlimited for gradient artwork.
 - **Smooth gradients.** SVG paths from VTracer have flat fills, and VTracer's clustering merges perfectly smooth gradients into one flat region. Use *Gradient bands* (on by default in the Illustration preset) to trace them as steps.
 - **Photographs** become posterized, stylised artwork rather than photo-realistic vectors. Raising detail or processing size increases fidelity but can produce multi-megabyte SVGs that are slow in editors.
