@@ -185,11 +185,11 @@
 
                         <div class="field" data-show-for="color grayscale">
                             <div class="field__row">
-                                <label class="field__label" for="maxColors">Colour count</label>
-                                <output class="field__value" for="maxColors" data-output="maxColors"></output>
+                                <label class="field__label" for="colorCount">Colour count</label>
+                                <output class="field__value" for="colorCount" data-output="colorCount"></output>
                             </div>
-                            <input type="range" id="maxColors" name="maxColors" min="0" max="64" step="1">
-                            <p class="field__hint">Limits the palette with VTracer's colour quantizer. Far left = unlimited.</p>
+                            <input type="range" id="colorCount" name="colorCount" min="0" max="32" step="1">
+                            <p class="field__hint">Snaps every pixel to a fixed palette before tracing, which removes blended edge colours. Auto detects the logo's real colours. Far left = unlimited, for gradients and photos.</p>
                         </div>
 
                         <div class="field" data-show-for="color grayscale">
@@ -207,7 +207,7 @@
                                 <output class="field__value" for="gradientBands" data-output="gradientBands"></output>
                             </div>
                             <input type="range" id="gradientBands" name="gradientBands" min="0" max="32" step="4">
-                            <p class="field__hint">SVG paths have flat fills, so smooth gradients are traced as steps. More levels give finer bands. Off may merge gradients into one colour.</p>
+                            <p class="field__hint" id="gradientBandsHint">SVG paths have flat fills, so smooth gradients are traced as steps. More levels give finer bands. Off may merge gradients into one colour.</p>
                         </div>
 
                         <div class="field" data-show-for="bw">
@@ -313,6 +313,11 @@
                                     <option value="512">Up to 512 px</option>
                                 </select>
                                 <p class="field__hint" id="maxSizeHint">Larger images are scaled down before tracing. The SVG keeps the original dimensions.</p>
+                                <label class="check">
+                                    <input type="checkbox" name="upscale" id="upscale">
+                                    <span>Upscale small images for sharper, more accurate edges</span>
+                                </label>
+                                <p class="field__hint">Enlarges images under 1600 px before tracing so thin gaps, points and small text survive. Works best with a colour count or Black &amp; white.</p>
                             </div>
                         </details>
 
