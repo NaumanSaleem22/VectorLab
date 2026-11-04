@@ -188,6 +188,75 @@ function paletteIndexFor(p, palette) {
     return blend ? blend.index : nearest;
 }
 
+/** Palette index per pixel of snapped data; transparent pixels get index `palette.length`. */
+function toLabels(data, palette) {
+    const transparent = palette.length;
+    const keys = new Map(palette.map((c, i) => [(c[0] << 16) | (c[1] << 8) | c[2], i]));
+    const labels = new Uint8Array(data.length / 4);
+    for (let p = 0, i = 0; p < labels.length; p += 1, i += 4) {
+        labels[p] = data[i + 3] < 128 ? transparent : keys.get((data[i] << 16) | (data[i + 1] << 8) | data[i + 2]) ?? transparent;
+    }
+    return labels;
+}
+
+function writeLabels(data, labels, palette) {
+    for (let p = 0, i = 0; p < labels.length; p += 1, i += 4) {
+        const label = labels[p];
+        if (label === palette.length) {
+            data[i + 3] = 0;
+            continue;
+        }
+        const c = palette[label];
+        data[i] = c[0];
+        data[i + 1] = c[1];
+        data[i + 2] = c[2];
+        data[i + 3] = 255;
+    }
+}
+
+/**
+ * Reassigns every connected patch smaller than `minArea` pixels to the colour it
+ * borders most. Done here rather than by VTracer's speckle filter, whose merging
+ * bends shared boundaries and leaves kinks and spurs where patches used to be.
+ */
+export function removeIslands(data, width, height, palette, minArea) {
+    if (minArea < 2 || palette.length < 2) return;
+    const labels = toLabels(data, palette);
+    const seen = new Uint8Array(labels.length);
+    const stack = new Int32Array(labels.length);
+    const neighbours = new Int32Array(palette.length + 1);
+    for (let start = 0; start < labels.length; start += 1) {
+        if (seen[start]) continue;
+        const own = labels[start];
+        let top = 0;
+        let size = 0;
+        stack[top++] = start;
+        seen[start] = 1;
+        neighbours.fill(0);
+        const members = [];
+        while (top > 0) {
+            const p = stack[--top];
+            size += 1;
+            if (size < minArea) members.push(p);
+            const x = p % width;
+            const around = [x > 0 ? p - 1 : -1, x < width - 1 ? p + 1 : -1, p >= width ? p - width : -1, p < labels.length - width ? p + width : -1];
+            for (const q of around) {
+                if (q < 0) continue;
+                if (labels[q] !== own) neighbours[labels[q]] += 1;
+                else if (!seen[q]) {
+                    seen[q] = 1;
+                    stack[top++] = q;
+                }
+            }
+        }
+        if (size >= minArea) continue;
+        let best = -1;
+        for (let c = 0; c < neighbours.length; c += 1) if (neighbours[c] > 0 && (best < 0 || neighbours[c] > neighbours[best])) best = c;
+        if (best >= 0) for (const p of members) labels[p] = best;
+    }
+    writeLabels(data, labels, palette);
+}
+
 /**
  * Majority filter over the snapped colours: each pixel takes the colour that most
  * of its (2r+1)² neighbourhood has, when that clearly outnumbers its own. This
@@ -198,12 +267,7 @@ function paletteIndexFor(p, palette) {
 export function refineEdges(data, width, height, palette, radius, passes = 1) {
     if (radius < 1 || palette.length < 2) return;
     const k = palette.length + 1;
-    const transparent = palette.length;
-    const keys = new Map(palette.map((c, i) => [(c[0] << 16) | (c[1] << 8) | c[2], i]));
-    let labels = new Uint8Array(width * height);
-    for (let p = 0, i = 0; p < labels.length; p += 1, i += 4) {
-        labels[p] = data[i + 3] < 128 ? transparent : keys.get((data[i] << 16) | (data[i + 1] << 8) | data[i + 2]) ?? transparent;
-    }
+    let labels = toLabels(data, palette);
 
     const colHist = new Int32Array(width * k);
     const rowHist = new Int32Array(k);
@@ -243,18 +307,7 @@ export function refineEdges(data, width, height, palette, radius, passes = 1) {
         labels = next;
     }
 
-    for (let p = 0, i = 0; p < labels.length; p += 1, i += 4) {
-        const label = labels[p];
-        if (label === transparent) {
-            data[i + 3] = 0;
-            continue;
-        }
-        const c = palette[label];
-        data[i] = c[0];
-        data[i + 1] = c[1];
-        data[i + 2] = c[2];
-        data[i + 3] = 255;
-    }
+    writeLabels(data, labels, palette);
 }
 
 /** Replaces every opaque pixel with its palette colour, in place. */

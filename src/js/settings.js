@@ -49,7 +49,7 @@ export const PRESETS = {
             cornerThreshold: 60,
             simplify: 2,
             pathPrecision: 2,
-            hierarchical: 'cutout',
+            hierarchical: 'layered',
             maxSize: 2048,
             upscale: true,
             edgeRefinement: 1,
@@ -151,7 +151,8 @@ export function toEngineOptions(settings, scale = 1) {
     }
 
     options.clustering = 'color-cluster';
-    options.hierarchical = settings.hierarchical;
+    // 'layered' (seamless) is VectorLab's own mode, see layered-trace.js; without a palette it falls back to stacked.
+    options.hierarchical = settings.hierarchical === 'layered' ? 'stacked' : settings.hierarchical;
     options.colorPrecision = settings.colorPrecision;
     options.layerDifference = layerDifferenceFor(settings.detail);
     return options;

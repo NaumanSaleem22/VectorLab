@@ -10,6 +10,7 @@ import { preprocess } from './image-preprocessor.js';
 import { toEngineOptions } from './settings.js';
 import { finalizeSvg, optimizeSvg } from './svg-optimizer.js';
 import { snapSvgFills } from './palette.js';
+import { traceLayers } from './layered-trace.js';
 
 let enginePromise = null;
 
@@ -51,7 +52,10 @@ async function vectorize({ id, pixels, width, height, settings, output }) {
     let traced;
     try {
         const { data, width: w, height: h } = prepared.image;
-        traced = vectorizeRgba(new Uint8Array(data.buffer, data.byteOffset, data.byteLength), w, h, engineOptions);
+        traced =
+            settings.hierarchical === 'layered' && prepared.palette
+                ? traceLayers(prepared.image, prepared.palette, vectorizeRgba, engineOptions, Math.max(2, Math.round(scale)))
+                : vectorizeRgba(new Uint8Array(data.buffer, data.byteOffset, data.byteLength), w, h, engineOptions);
     } catch (error) {
         throw Object.assign(error instanceof Error ? error : new Error(String(error)), { code: classify(error) });
     }

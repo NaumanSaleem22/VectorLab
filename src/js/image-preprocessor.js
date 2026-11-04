@@ -8,7 +8,7 @@
  * `rasterize` needs a canvas and runs on the main thread.
  */
 import { UserFacingError } from './utils.js';
-import { AUTO_PALETTE_LIMIT, detectPalette, refineEdges, snapToPalette } from './palette.js';
+import { AUTO_PALETTE_LIMIT, detectPalette, refineEdges, removeIslands, snapToPalette } from './palette.js';
 
 const ALPHA_CUTOFF = 128;
 const BACKGROUND_TOLERANCE = 42;
@@ -216,28 +216,53 @@ function posterize(data, levels) {
     }
 }
 
-/** One horizontal + vertical box-blur pass over premultiplied channels. */
+/**
+ * One horizontal + vertical box-blur pass over premultiplied RGBA, edges clamped.
+ * Both passes walk memory row by row (the vertical one keeps running column sums),
+ * which matters at the multi-megapixel sizes logos are traced at.
+ */
 function boxBlur(src, dst, width, height, r) {
     const span = 2 * r + 1;
+    const stride = width * 4;
     for (let y = 0; y < height; y += 1) {
-        const row = y * width;
-        for (let c = 0; c < 4; c += 1) {
-            let sum = 0;
-            for (let x = -r; x <= r; x += 1) sum += src[(row + Math.min(width - 1, Math.max(0, x))) * 4 + c];
-            for (let x = 0; x < width; x += 1) {
-                dst[(row + x) * 4 + c] = sum / span;
-                sum += src[(row + Math.min(width - 1, x + r + 1)) * 4 + c] - src[(row + Math.max(0, x - r)) * 4 + c];
-            }
+        const row = y * stride;
+        let s0 = 0;
+        let s1 = 0;
+        let s2 = 0;
+        let s3 = 0;
+        for (let x = -r; x <= r; x += 1) {
+            const i = row + Math.min(width - 1, Math.max(0, x)) * 4;
+            s0 += src[i];
+            s1 += src[i + 1];
+            s2 += src[i + 2];
+            s3 += src[i + 3];
+        }
+        for (let x = 0; x < width; x += 1) {
+            const o = row + x * 4;
+            dst[o] = s0 / span;
+            dst[o + 1] = s1 / span;
+            dst[o + 2] = s2 / span;
+            dst[o + 3] = s3 / span;
+            const add = row + Math.min(width - 1, x + r + 1) * 4;
+            const drop = row + Math.max(0, x - r) * 4;
+            s0 += src[add] - src[drop];
+            s1 += src[add + 1] - src[drop + 1];
+            s2 += src[add + 2] - src[drop + 2];
+            s3 += src[add + 3] - src[drop + 3];
         }
     }
-    for (let x = 0; x < width; x += 1) {
-        for (let c = 0; c < 4; c += 1) {
-            let sum = 0;
-            for (let y = -r; y <= r; y += 1) sum += dst[(Math.min(height - 1, Math.max(0, y)) * width + x) * 4 + c];
-            for (let y = 0; y < height; y += 1) {
-                src[(y * width + x) * 4 + c] = sum / span;
-                sum += dst[(Math.min(height - 1, y + r + 1) * width + x) * 4 + c] - dst[(Math.max(0, y - r) * width + x) * 4 + c];
-            }
+    const sums = new Float32Array(stride);
+    for (let y = -r; y <= r; y += 1) {
+        const row = Math.min(height - 1, Math.max(0, y)) * stride;
+        for (let k = 0; k < stride; k += 1) sums[k] += dst[row + k];
+    }
+    for (let y = 0; y < height; y += 1) {
+        const row = y * stride;
+        const add = Math.min(height - 1, y + r + 1) * stride;
+        const drop = Math.max(0, y - r) * stride;
+        for (let k = 0; k < stride; k += 1) {
+            src[row + k] = sums[k] / span;
+            sums[k] += dst[add + k] - dst[drop + k];
         }
     }
 }
@@ -344,6 +369,8 @@ export function preprocess(image, settings, scale = 1) {
         snapToPalette(image.data, palette);
         const radius = Math.round(refinement.majority * pixelScale);
         if (radius) refineEdges(image.data, image.width, image.height, palette, radius);
+        const speck = settings.filterSpeckle * pixelScale;
+        removeIslands(image.data, image.width, image.height, palette, Math.round(speck * speck));
     } else if (settings.gradientBands > 0) {
         posterize(image.data, settings.gradientBands);
     }
